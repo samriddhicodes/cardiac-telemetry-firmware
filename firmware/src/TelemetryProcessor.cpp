@@ -1,5 +1,5 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#include "TelemetryProcessor.hpp"
+#include "../include/TelemetryProcessor.hpp"
 #include <iostream>
 #include <winsock2.h>
 #include <string>
@@ -53,7 +53,6 @@ void TelemetryProcessor::run() {
 
     std::cout << "[Firmware] Connecting to Node.js ingestion server on 127.0.0.1:5001...\n";
     
-    // Attempt connection loop
     while (m_running) {
         connectSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (connectSocket == INVALID_SOCKET) {
@@ -71,25 +70,54 @@ void TelemetryProcessor::run() {
 
     std::cout << "[Firmware] Network pipe established with backend gateway.\n";
 
+    // 3. Main processing loop
     while (m_running) {
         auto dataPoint = m_buffer.pop();
 
         if (dataPoint.has_value()) {
             double voltage = dataPoint.value();
+            
+            // ==========================================================
+            // INLINE DEBUG FORCE INJECTION
+            // ==========================================================
+            if (voltage > 1.5) { 
+                std::string alarmState = "NONE";
+                int bpmCalculated = 75; 
+
+                auto now = std::chrono::steady_clock::now();
+                auto timeSinceLastPeak = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastPeakTime).count();
+
+                if (timeSinceLastPeak < 400 && timeSinceLastPeak > 50) {
+                    triggerInterruptAlarm("TACHYCARDIA (CRITICAL HIGH HEART RATE)");
+                    alarmState = "TACHYCARDIAC";
+                    bpmCalculated = 170;
+                }
+                
+                m_lastPeakTime = now;
+
+                std::ostringstream jsonStream;
+                jsonStream << "{\"voltage\":" << voltage 
+                           << ",\"bpm\":" << bpmCalculated 
+                           << ",\"alarm\":\"" << alarmState << "\"}\n";
+                send(connectSocket, jsonStream.str().c_str(), static_cast<int>(jsonStream.str().length()), 0);
+                continue; 
+            }
+            // ==========================================================
+
             auto now = std::chrono::steady_clock::now();
             auto timeSinceLastPeak = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastPeakTime).count();
             
             std::string alarmState = "NONE";
             int bpmCalculated = 0;
 
-            // Asystole detection
+            // Asystole processing check
             if (timeSinceLastPeak > 2500) {
                 triggerInterruptAlarm("ASYSTOLE (CARDIAC ARREST DETECTED)");
                 alarmState = "ASYSTOLE";
                 m_lastPeakTime = now; 
             }
 
-            // R-Peak detection
+            // Normal path R-Peak evaluation logic
             if (voltage > m_peakThreshold && !m_peakDetected) {
                 m_peakDetected = true;
                 double bpm = 60000.0 / timeSinceLastPeak;
@@ -105,14 +133,12 @@ void TelemetryProcessor::run() {
                 m_peakDetected = false;
             }
 
-            // 3. Serialize to JSON payload
             std::ostringstream jsonStream;
             jsonStream << "{\"voltage\":" << voltage 
                        << ",\"bpm\":" << bpmCalculated 
                        << ",\"alarm\":\"" << alarmState << "\"}\n";
             std::string jsonPayload = jsonStream.str();
 
-            // 4. Stream over the TCP socket
             send(connectSocket, jsonPayload.c_str(), static_cast<int>(jsonPayload.length()), 0);
         }
 
