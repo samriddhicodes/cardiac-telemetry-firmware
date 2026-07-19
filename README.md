@@ -1,31 +1,52 @@
-# Real-Time Cardiac Telemetry and Pulse Classifier
+# Real-Time Cardiac Telemetry System
 
-A simulated real-time embedded firmware module built in modern C++ that processes streamable ECG voltage data, monitors a patient's heart rate, and triggers low-latency, firmware-level hardware interrupt alerts for critical cardiac anomalies.
+A full-stack biomedical engineering project demonstrating low-latency telemetry processing. This system captures simulated real-time hardware data, processes it via a C++ firmware engine, streams it across a TCP socket to a Node.js gateway backend, and displays it dynamically via a React web application.
 
-## Embedded and Architectural Highlights
+## System Architecture
 
-This project intentionally rejects desktop application patterns in favor of safety-critical, deterministic firmware constraints:
+* **Firmware Engine (C++17):** Simulates a 500Hz ECG signal generator using a thread-safe circular buffer, evaluates raw voltages for R-peaks to calculate dynamic BPM, detects clinical anomalies (Tachycardia & Asystole), and broadcasts JSON packets over WinSock TCP.
+* **Ingestion Backend (Node.js):** Acts as a real-time data gateway by hosting a TCP socket listener for the firmware engine and a WebSocket server to pipe streams directly to the browser.
+* **Web Dashboard (React + Vite):** Uses the HTML5 Canvas API to draw a live scrolling medical grid display with responsive glowing alerts if a critical patient state is triggered.
 
-* **Zero Heap Allocation:** Dynamic memory allocation (new, delete, std::vector resizing) is strictly forbidden to guarantee absolute runtime determinism and eliminate the possibility of heap fragmentation or memory leaks in a life-critical environment.
-* **Thread-Safe Circular Buffer:** Built a custom, fixed-size CircularBuffer using std::array wrapped in a mutex barrier to pass high-frequency data safely between producer and consumer threads without race conditions.
-* **Multi-Threaded Sensor Simulation:** * **Sensor Thread:** Simulates a 500Hz physical ADC hardware sampling rate, generating mock ECG waveforms (P-wave, T-wave, and sharp QRS complexes).
-    * **Analytics Thread:** Consumes the stream, tracking real-time intervals between R-peaks to calculate instantaneous Beats Per Minute (BPM).
-
-## Firmware Safety Responses and Fault Conditions
-
-The Telemetry Processor evaluates incoming data frame-by-frame and implements specific state-machine overrides when clinical thresholds are breached:
-
-* **Normal Sinus Rhythm Handling:** Under nominal operation (60 to 100 BPM), the processor logs standard telemetry metrics including the current voltage vector and a rolling calculation of the heart rate.
-* **Tachycardia Safety Mitigation:** If the calculated heart rate crosses the threshold of 140 BPM, the system bypasses standard diagnostic logging. It immediately calls an out-of-band high-priority routine simulating a hardware interrupt warning log to alert the medical monitoring network.
-* **Asystole (Cardiac Arrest) Fault Mitigation:** The system tracks the elapsed time since the last verified R-peak. If no valid peak passes the threshold within 2500 milliseconds, the processor declares a critical device fault (Flatline condition). The engine triggers a continuous high-priority hardware interrupt loop to bypass normal operation and signal a life-threatening emergency.
-* **Debouncing and Noise Rejection:** The processing engine relies on a hardware-level voltage threshold (1.5 V) combined with a digital debounce toggle. This ensures that broad voltage peaks or electromagnetic interference do not cause duplicate peak registration or false heart rate warnings.
-
-## How to Build and Run
+## Getting Started
 
 ### Prerequisites
-* A compiler supporting C++17 or C++20 (GCC, Clang, or MSVC)
+* Windows OS with Microsoft C++ Build Tools installed (`cl.exe`)
+* Node.js (v16+)
 
-### Build Instructions via Terminal
-Navigate to the root directory and compile using:
-```bash
-g++ -std=c++17 -O2 src/*.cpp -Iinclude -lpthread -o telemetry_node
+### Installation & Execution
+
+1.  **Clone the Repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd cardiac-telemetry-firmware
+    ```
+
+2.  **Launch the Backend Gateway:**
+    ```bash
+    cd backend
+    npm install
+    node server.js
+    ```
+
+3.  **Launch the React Frontend:**
+    Open a new terminal window:
+    ```bash
+    cd frontend
+    npm install
+    npm run dev
+    ```
+
+4.  **Compile and Run the Firmware:**
+    Open a Developer PowerShell or command window:
+    ```bash
+    cl.exe /EHsc /std:c++17 /Ifirmware/include firmware/src/*.cpp ws2_32.lib /Fefirmware/src/main.exe
+    ./firmware/src/main.exe
+    ```
+
+### Simulation Controls
+When running the firmware binary terminal, press the following keys to dynamically change the heart's biological rhythm:
+* `N` - Normal Rhythm (~75 BPM)
+* `T` - Inject Pathological Tachycardia (>140 BPM)
+* `A` - Inject Asystole (Cardiac Arrest Flatline)
+* `Q` - Safe System Shutdown

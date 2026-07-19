@@ -36,7 +36,6 @@ void TelemetryProcessor::triggerInterruptAlarm(const char* alertMessage) {
 }
 
 void TelemetryProcessor::run() {
-    // 1. Initialize Windows Sockets (Winsock)
     WSADATA wsaData;
     SOCKET connectSocket = INVALID_SOCKET;
     
@@ -45,7 +44,6 @@ void TelemetryProcessor::run() {
         return;
     }
 
-    // 2. Configure and establish TCP connection to Node.js server
     sockaddr_in clientService;
     clientService.sin_family = AF_INET;
     clientService.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -70,69 +68,44 @@ void TelemetryProcessor::run() {
 
     std::cout << "[Firmware] Network pipe established with backend gateway.\n";
 
-    // 3. Main processing loop
     while (m_running) {
         auto dataPoint = m_buffer.pop();
 
         if (dataPoint.has_value()) {
             double voltage = dataPoint.value();
-            
-            // ==========================================================
-            // INLINE DEBUG FORCE INJECTION
-            // ==========================================================
-            if (voltage > 1.5) { 
-                std::string alarmState = "NONE";
-                int bpmCalculated = 75; 
-
-                auto now = std::chrono::steady_clock::now();
-                auto timeSinceLastPeak = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastPeakTime).count();
-
-                if (timeSinceLastPeak < 400 && timeSinceLastPeak > 50) {
-                    triggerInterruptAlarm("TACHYCARDIA (CRITICAL HIGH HEART RATE)");
-                    alarmState = "TACHYCARDIAC";
-                    bpmCalculated = 170;
-                }
-                
-                m_lastPeakTime = now;
-
-                std::ostringstream jsonStream;
-                jsonStream << "{\"voltage\":" << voltage 
-                           << ",\"bpm\":" << bpmCalculated 
-                           << ",\"alarm\":\"" << alarmState << "\"}\n";
-                send(connectSocket, jsonStream.str().c_str(), static_cast<int>(jsonStream.str().length()), 0);
-                continue; 
-            }
-            // ==========================================================
-
             auto now = std::chrono::steady_clock::now();
             auto timeSinceLastPeak = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastPeakTime).count();
             
             std::string alarmState = "NONE";
             int bpmCalculated = 0;
 
-            // Asystole processing check
+            // 1. Asystole processing check (No peaks for > 2.5 seconds)
             if (timeSinceLastPeak > 2500) {
                 triggerInterruptAlarm("ASYSTOLE (CARDIAC ARREST DETECTED)");
                 alarmState = "ASYSTOLE";
+                // Reset to prevent spamming every single iteration
                 m_lastPeakTime = now; 
             }
 
-            // Normal path R-Peak evaluation logic
-            if (voltage > m_peakThreshold && !m_peakDetected) {
-                m_peakDetected = true;
-                double bpm = 60000.0 / timeSinceLastPeak;
-                bpmCalculated = static_cast<int>(bpm);
+            // 2. Real R-Peak evaluation logic
+            if (voltage > m_peakThreshold) {
+                if (!m_peakDetected) {
+                    m_peakDetected = true;
+                    double bpm = 60000.0 / timeSinceLastPeak;
+                    bpmCalculated = static_cast<int>(bpm);
 
-                if (bpm > 140.0 && timeSinceLastPeak > 50) {
-                    triggerInterruptAlarm("TACHYCARDIA (CRITICAL HIGH HEART RATE)");
-                    alarmState = "TACHYCARDIAC";
+                    if (bpm > 140.0 && timeSinceLastPeak > 50) {
+                        triggerInterruptAlarm("TACHYCARDIA (CRITICAL HIGH HEART RATE)");
+                        alarmState = "TACHYCARDIAC";
+                    } else {
+                        alarmState = "NONE"; // Clear alarm state immediately upon a normal valid peak
+                    }
+                    m_lastPeakTime = now;
                 }
-                m_lastPeakTime = now;
             } 
-            else if (voltage < m_peakThreshold) {
+            else if (voltage < (m_peakThreshold - 0.2)) { // Added hysteresis to prevent noise bouncing
                 m_peakDetected = false;
             }
-
             std::ostringstream jsonStream;
             jsonStream << "{\"voltage\":" << voltage 
                        << ",\"bpm\":" << bpmCalculated 
